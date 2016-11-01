@@ -38,6 +38,7 @@ import stat
 import sys
 import tempfile
 import time
+from fnmatch import fnmatch
 
 
 DEFAULT_CHUNK_SIZE = 16384
@@ -94,7 +95,8 @@ def get_sqlite3_cursor(path, copy=False):
     return conn
 
 
-def list_existing_paths(directory, expected=(), ignored=(), follow_links=False):
+def list_existing_paths(directory, expected=(), ignored=(), 
+                        verbosity=1, follow_links=False):
     """list_existing_paths('/dir') -> ([path1, path2, ...], total_size)
 
     Returns a tuple with a list with existing files in `directory` and their
@@ -127,7 +129,9 @@ def list_existing_paths(directory, expected=(), ignored=(), follow_links=False):
                 if ex.errno not in IGNORED_FILE_SYSTEM_ERRORS:
                     raise
             else:
-                if not stat.S_ISREG(st.st_mode) or p in ignored:
+                if not stat.S_ISREG(st.st_mode) or any([fnmatch(p, exc) for exc in ignored]):
+                    if verbosity > 1:
+                        print('Ignoring file:', p)
                     continue
                 paths.append(p)
                 total_size += st.st_size
@@ -142,7 +146,7 @@ class BitrotException(Exception):
 class Bitrot(object):
     def __init__(
         self, verbosity=1, test=False, follow_links=False, commit_interval=300,
-        chunk_size=DEFAULT_CHUNK_SIZE, file_list=None,
+        chunk_size=DEFAULT_CHUNK_SIZE, file_list=None, exclude_list=[]
     ):
         self.verbosity = verbosity
         self.test = test
@@ -150,6 +154,7 @@ class Bitrot(object):
         self.commit_interval = commit_interval
         self.chunk_size = chunk_size
         self.file_list = file_list
+        self.exclude_list = exclude_list
         self._last_reported_size = ''
         self._last_commit_ts = 0
 
@@ -182,12 +187,15 @@ class Bitrot(object):
         current_size = 0
         missing_paths = self.select_all_paths(cur)
         if self.file_list:
-            paths = [line.rstrip('\n').encode(FSENCODING) for line in self.file_list.readlines()]
+            paths = [line.rstrip('\n').encode(FSENCODING)
+                for line in self.file_list.readlines()]
             total_size = sum([os.path.getsize(filename) for filename in paths])
         else:
             paths, total_size = list_existing_paths(
-                b'.', expected=missing_paths, ignored={bitrot_db, bitrot_sha512},
+                b'.', expected=missing_paths, 
+                ignored=[bitrot_db, bitrot_sha512] + self.exclude_list,
                 follow_links=self.follow_links,
+                verbosity=self.verbosity
             )
 
         for p in paths:
@@ -521,6 +529,9 @@ def run_from_command_line():
     parser.add_argument(
         '-f', '--file-list', default='',
         help='only read the files listed in this file (use - for stdin)')
+    parser.add_argument(
+        '-x', '--exclude-list', default='',
+        help="don't read the files listed in this file - wildcards are allowed")
     
     args = parser.parse_args()
     if args.sum:
@@ -544,13 +555,20 @@ def run_from_command_line():
             file_list = open(args.file_list)
         else:
             file_list = None
+        if args.exclude_list:
+            if verbosity:
+                print('Opening exclude list in', args.exclude_list)
+            exclude_list = [line.rstrip('\n').encode(FSENCODING) for line in open(args.exclude_list)]
+        else:
+            exclude_list = []
         bt = Bitrot(
             verbosity=verbosity,
             test=args.test,
             follow_links=args.follow_links,
             commit_interval=args.commit_interval,
             chunk_size=args.chunk_size,
-            file_list=file_list
+            file_list=file_list,
+            exclude_list=exclude_list,
         )
         if args.fsencoding:
             FSENCODING = args.fsencoding
