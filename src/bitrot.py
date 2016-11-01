@@ -129,7 +129,14 @@ def list_existing_paths(directory, expected=(), ignored=(),
                 if ex.errno not in IGNORED_FILE_SYSTEM_ERRORS:
                     raise
             else:
-                if not stat.S_ISREG(st.st_mode) or any([fnmatch(p, exc) for exc in ignored]):
+                # split path /dir1/dir2/file.txt into
+                # ['dir1', 'dir2', 'file.txt']
+                # and match on any of these components
+                # so we could use 'dir*', '*2', '*.txt', etc. to exclude anything
+                exclude_this = [fnmatch(file.encode(FSENCODING), wildcard) 
+                                for file in p.decode(FSENCODING).split(os.path.sep)
+                                for wildcard in ignored]
+                if not stat.S_ISREG(st.st_mode) or any(exclude_this):
                     if verbosity > 1:
                         print('Ignoring file:', p)
                     continue
@@ -169,8 +176,8 @@ class Bitrot(object):
     def run(self):
         check_sha512_integrity(verbosity=self.verbosity)
 
-        bitrot_db = get_path()
-        bitrot_sha512 = get_path(ext=b'sha512')
+        bitrot_db = os.path.basename(get_path())
+        bitrot_sha512 = os.path.basename(get_path(ext=b'sha512'))
         try:
             conn = get_sqlite3_cursor(bitrot_db, copy=self.test)
         except ValueError:
