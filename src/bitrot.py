@@ -63,8 +63,7 @@ def sha1(path, chunk_size):
 
 
 def ts():
-    return datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S%z')
-
+    return datetime.datetime.now().astimezone(datetime.UTC).strftime('%Y-%m-%d %H:%M:%S%z')
 
 def get_sqlite3_cursor(path, copy=False):
     path = path.decode(FSENCODING)
